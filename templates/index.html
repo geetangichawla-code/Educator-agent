@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Educator AI Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body data-conversation-id="{{ conversation_id }}">
+    <div class="app-layout">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>🎓 Educator AI</h2>
+                <button id="newChatBtn" type="button" class="new-chat-btn">+ New Chat</button>
+            </div>
+            <div class="conversation-list" id="conversationList">
+                <!-- populated by JS -->
+            </div>
+        </aside>
+
+        <main class="main-chat">
+            <div class="header">
+                <div class="header-top">
+                    <p>Ask a question, request a quiz, or get a study plan</p>
+                    <div class="user-bar">
+                        <span>{{ username }}</span>
+                        <label class="voice-toggle">
+                            <input type="checkbox" id="voiceOutToggle" checked>
+                            🔊 Speak replies
+                        </label>
+                        <button id="stopSpeakBtn" type="button" class="stop-speak-btn" title="Stop speaking">⏹</button>
+                        <a href="{{ url_for('logout') }}">Logout</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-box" id="chatBox"></div>
+
+            <div class="input-area">
+                <input type="text" id="userInput" placeholder="Type your message here..." />
+                <button id="micBtn" type="button" title="Speak">🎤</button>
+                <button onclick="sendMessage()">Send</button>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script>
+        marked.setOptions({ breaks: true }); // single \n becomes <br>, matches how the agent writes text
+
+        let currentConversationId = document.body.dataset.conversationId || null;
+
+        const WELCOME_HTML = `
+            <div class="message bot-message">
+                <p>Hi! I'm your Educator AI Agent. I can help you with:</p>
+                <ul>
+                    <li>📚 Answering curriculum questions</li>
+                    <li>📝 Generating quizzes on any topic</li>
+                    <li>📅 Creating personalised study plans</li>
+                </ul>
+                <p>What would you like to do?</p>
+            </div>`;
+
+        function escapeHtml(str) {
+            const div = document.createElement("div");
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Clean up LaTeX-ish remnants (\text{}, \xrightarrow{}) before markdown parsing,
+        // since marked.js doesn't understand LaTeX syntax.
+        function prepForMarkdown(raw) {
+            return raw
+                .replace(/\\text\{([^}]*)\}/g, "$1")
+                .replace(/\\xrightarrow\{([^}]*)\}/g, " → ")
+                .replace(/\\;/g, " ")
+                .replace(/[{}]/g, "");
+        }
+
+        // Plain-text version for speech — no markdown symbols, no HTML tags.
+        function cleanForSpeech(raw) {
+            return raw
+                .replace(/\\text\{([^}]*)\}/g, "$1")
+                .replace(/\\xrightarrow\{([^}]*)\}/g, " leads to ")
+                .replace(/[{}]/g, "")
+                .replace(/\\;/g, " ")
+                .replace(/#{1,6}\s?/g, "")
+                .replace(/\*\*(.*?)\*\*/g, "$1")
+                .replace(/\*(.*?)\*/g, "$1");
+        }
+
+        function addUserMessage(text) {
+            const chatBox = document.getElementById("chatBox");
+            chatBox.innerHTML += `
+                <div class="message user-message">
+                    <p>${escapeHtml(text)}</p>
+                </div>`;
+        }
+
+        function addBotMessage(rawText) {
+            const chatBox = document.getElementById("chatBox");
+            const markdownSource = prepForMarkdown(rawText);
+            const html = marked.parse(markdownSource);
+
+            chatBox.innerHTML += `
+                <div class="message bot-message">${html}</div>`;
+
+            return cleanForSpeech(rawText);
+        }
+
+        async function loadHistory() {
+            const chatBox = document.getElementById("chatBox");
+            try {
+                const res = await fetch("/history");
+                if (!res.ok) {
+                    chatBox.innerHTML = WELCOME_HTML;
+                    return;
+                }
+                const data = await res.json();
+
+                if (data.length === 0) {
+                    chatBox.innerHTML = WELCOME_HTML;
+                    return;
+                }
+
+                chatBox.innerHTML = "";
+                data.forEach(row => {
+                    if (row.role === "user") {
+                        addUserMessage(row.message);
+                    } else {
+                        addBotMessage(row.message);
+                    }
+                });
+                chatBox.scrollTop = chatBox.scrollHeight;
+            } catch (e) {
+                console.error("Failed to load history", e);
+                chatBox.innerHTML = WELCOME_HTML;
+            }
+        }
+
+        async function loadConversations() {
+            try {
+                const res = await fetch("/conversations");
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const list = document.getElementById("conversationList");
+                list.innerHTML = "";
+
+                if (data.length === 0) {
+                    list.innerHTML = `<div class="conversation-empty">No saved chats yet</div>`;
+                    return;
+                }
+
+                data.forEach(conv => {
+                    const rawTitle = conv.title || "New conversation";
+                    const title = rawTitle.length > 32 ? rawTitle.slice(0, 32) + "…" : rawTitle;
+
+                    const item = document.createElement("div");
+                    item.className = "conversation-item" +
+                        (conv.conversation_id === currentConversationId ? " active" : "");
+                    item.textContent = title;
+                    item.addEventListener("click", () => switchConversation(conv.conversation_id));
+                    list.appendChild(item);
+                });
+            } catch (e) {
+                console.error("Failed to load conversations", e);
+            }
+        }
+
+        async function switchConversation(convId) {
+            if (convId === currentConversationId) return;
+            window.speechSynthesis.cancel();
+
+            await fetch("/switch_chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversation_id: convId })
+            });
+
+            currentConversationId = convId;
+            await loadHistory();
+            loadConversations();
+        }
+
+        let currentUtterance = null;
+
+        function speak(text) {
+            if (!("speechSynthesis" in window)) return;
+            if (!document.getElementById("voiceOutToggle").checked) return;
+
+            window.speechSynthesis.cancel();
+            currentUtterance = new SpeechSynthesisUtterance(text);
+            currentUtterance.lang = "en-US";
+            currentUtterance.rate = 1;
+            window.speechSynthesis.speak(currentUtterance);
+        }
+
+        document.getElementById("stopSpeakBtn").addEventListener("click", () => {
+            window.speechSynthesis.cancel();
+        });
+
+        document.getElementById("voiceOutToggle").addEventListener("change", (e) => {
+            if (!e.target.checked) {
+                window.speechSynthesis.cancel();
+            }
+        });
+
+        async function sendMessage() {
+            const input = document.getElementById("userInput");
+            const chatBox = document.getElementById("chatBox");
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            addUserMessage(message);
+            input.value = "";
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            chatBox.innerHTML += `
+                <div class="message bot-message loading" id="loading">
+                    <p>Thinking</p>
+                </div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            const res = await fetch("/chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message })
+            });
+
+            const data = await res.json();
+
+            document.getElementById("loading").remove();
+            const speechText = addBotMessage(data.response);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            speak(speechText);
+            loadConversations();
+        }
+
+        document.getElementById("userInput").addEventListener("keypress", function(e) {
+            if (e.key === "Enter") sendMessage();
+        });
+
+        document.getElementById("newChatBtn").addEventListener("click", async () => {
+            window.speechSynthesis.cancel();
+            const res = await fetch("/new_chat", { method: "POST" });
+            const data = await res.json();
+            currentConversationId = data.conversation_id;
+            document.getElementById("chatBox").innerHTML = WELCOME_HTML;
+            loadConversations();
+        });
+
+        window.addEventListener("DOMContentLoaded", () => {
+            loadHistory();
+            loadConversations();
+        });
+
+        // --- Voice input (Web Speech API) ---
+        const micBtn = document.getElementById("micBtn");
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.lang = "en-US";
+            recognition.interimResults = false;
+
+            let listening = false;
+
+            micBtn.addEventListener("click", () => {
+                if (listening) return;
+                window.speechSynthesis.cancel();
+                listening = true;
+                micBtn.classList.add("listening");
+                micBtn.textContent = "🔴";
+                recognition.start();
+            });
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                document.getElementById("userInput").value = transcript;
+            };
+
+            recognition.onend = () => {
+                listening = false;
+                micBtn.classList.remove("listening");
+                micBtn.textContent = "🎤";
+            };
+
+            recognition.onerror = () => {
+                listening = false;
+                micBtn.classList.remove("listening");
+                micBtn.textContent = "🎤";
+            };
+        } else {
+            micBtn.style.display = "none";
+        }
+    </script>
+</body>
+</html>

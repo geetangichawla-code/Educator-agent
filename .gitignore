@@ -1,0 +1,23 @@
+﻿# Environment variables — never commit secrets
+.env
+
+# Database — contains real user data
+educator.db
+
+# Python virtual environment
+venv/
+env/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Never commit key files
+static/*key*.txt
+*.key
