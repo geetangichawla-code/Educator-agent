@@ -36,6 +36,15 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_titles (
+            user_id INTEGER NOT NULL,
+            conversation_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            PRIMARY KEY (user_id, conversation_id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -109,15 +118,55 @@ def get_conversations(user_id: int):
         SELECT
             conversation_id,
             MAX(created_at) AS last_at,
-            (SELECT message FROM chat_history c2
-             WHERE c2.conversation_id = chat_history.conversation_id
-               AND c2.role = 'user'
-             ORDER BY c2.created_at ASC LIMIT 1) AS title
+            COALESCE(
+                (SELECT t.title FROM conversation_titles t
+                 WHERE t.user_id = ?
+                   AND t.conversation_id = chat_history.conversation_id),
+                (SELECT message FROM chat_history c2
+                 WHERE c2.conversation_id = chat_history.conversation_id
+                   AND c2.role = 'user'
+                 ORDER BY c2.created_at ASC LIMIT 1)
+            ) AS title
         FROM chat_history
         WHERE user_id = ?
         GROUP BY conversation_id
         ORDER BY last_at DESC
-    """, (user_id,))
+    """, (user_id, user_id))
     rows = cursor.fetchall()
     conn.close()
     return rows
+
+def delete_conversation(user_id: int, conversation_id: str) -> int:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM chat_history WHERE user_id = ? AND conversation_id = ?",
+        (user_id, conversation_id)
+    )
+    deleted = cursor.rowcount
+    cursor.execute(
+        "DELETE FROM conversation_titles WHERE user_id = ? AND conversation_id = ?",
+        (user_id, conversation_id)
+    )
+    conn.commit()
+    conn.close()
+    return deleted
+
+def rename_conversation(user_id: int, conversation_id: str, title: str) -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    # only rename chats that really belong to this user
+    cursor.execute(
+        "SELECT 1 FROM chat_history WHERE user_id = ? AND conversation_id = ? LIMIT 1",
+        (user_id, conversation_id)
+    )
+    if not cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute(
+        "INSERT OR REPLACE INTO conversation_titles (user_id, conversation_id, title) VALUES (?, ?, ?)",
+        (user_id, conversation_id, title)
+    )
+    conn.commit()
+    conn.close()
+    return True

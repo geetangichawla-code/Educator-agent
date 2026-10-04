@@ -133,7 +133,36 @@ def new_chat():
     new_id = database.new_conversation_id()
     session["conversation_id"] = new_id
     return jsonify({"conversation_id": new_id})
+@app.route("/delete_chat", methods=["POST"])
+@login_required
+def delete_chat():
+    data = request.get_json()
+    conv_id = data.get("conversation_id")
+    if not conv_id:
+        return jsonify({"error": "Missing conversation_id"}), 400
 
+    uid = session["user_id"]
+    database.delete_conversation(uid, conv_id)
+
+    # If the user deleted the chat they were viewing, move them to another one
+    if session.get("conversation_id") == conv_id:
+        session["conversation_id"] = (
+            database.get_latest_conversation_id(uid)
+            or database.new_conversation_id()
+        )
+
+    return jsonify({"status": "ok", "conversation_id": session["conversation_id"]})
+@app.route("/rename_chat", methods=["POST"])
+@login_required
+def rename_chat():
+    data = request.get_json()
+    conv_id = data.get("conversation_id")
+    title = (data.get("title") or "").strip()[:80]
+    if not conv_id or not title:
+        return jsonify({"error": "Missing conversation_id or title"}), 400
+    if not database.rename_conversation(session["user_id"], conv_id, title):
+        return jsonify({"error": "Chat not found"}), 404
+    return jsonify({"status": "ok"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

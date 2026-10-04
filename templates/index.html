@@ -161,7 +161,23 @@
                     const item = document.createElement("div");
                     item.className = "conversation-item" +
                         (conv.conversation_id === currentConversationId ? " active" : "");
-                    item.textContent = title;
+
+                    const titleSpan = document.createElement("span");
+                    titleSpan.className = "conversation-title";
+                    titleSpan.textContent = title;
+
+                    const menuBtn = document.createElement("button");
+                    menuBtn.type = "button";
+                    menuBtn.className = "conv-menu-btn";
+                    menuBtn.title = "Options";
+                    menuBtn.textContent = "\u22EE"; // three vertical dots
+                    menuBtn.addEventListener("click", (e) => {
+                        e.stopPropagation(); // don't also switch to this chat
+                        showConvMenu(menuBtn, conv.conversation_id, rawTitle);
+                    });
+
+                    item.appendChild(titleSpan);
+                    item.appendChild(menuBtn);
                     item.addEventListener("click", () => switchConversation(conv.conversation_id));
                     list.appendChild(item);
                 });
@@ -182,6 +198,84 @@
 
             currentConversationId = convId;
             await loadHistory();
+            loadConversations();
+        }
+
+        async function deleteConversation(convId) {
+            if (!confirm("Delete this chat? This can't be undone.")) return;
+            window.speechSynthesis.cancel();
+
+            const res = await fetch("/delete_chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversation_id: convId })
+            });
+
+            if (!res.ok) {
+                alert("Could not delete the chat.");
+                return;
+            }
+
+            const data = await res.json();
+
+            // If the open chat was deleted, the server picked a new active chat
+            if (convId === currentConversationId) {
+                currentConversationId = data.conversation_id;
+                await loadHistory();
+            }
+            loadConversations();
+        }
+
+        // --- Three-dots menu (Rename / Delete) ---
+        let openMenu = null;
+
+        function closeMenu() {
+            if (openMenu) { openMenu.remove(); openMenu = null; }
+        }
+        document.addEventListener("click", closeMenu);
+        window.addEventListener("resize", closeMenu);
+
+        function showConvMenu(anchor, convId, fullTitle) {
+            closeMenu();
+            const menu = document.createElement("div");
+            menu.className = "conv-menu";
+
+            const renameItem = document.createElement("button");
+            renameItem.type = "button";
+            renameItem.textContent = "Rename";
+            renameItem.addEventListener("click", () => renameConversation(convId, fullTitle));
+
+            const deleteItem = document.createElement("button");
+            deleteItem.type = "button";
+            deleteItem.className = "danger";
+            deleteItem.textContent = "Delete";
+            deleteItem.addEventListener("click", () => deleteConversation(convId));
+
+            menu.appendChild(renameItem);
+            menu.appendChild(deleteItem);
+            document.body.appendChild(menu);
+
+            const r = anchor.getBoundingClientRect();
+            menu.style.top = (r.bottom + 4) + "px";
+            menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 160)) + "px";
+            openMenu = menu;
+        }
+
+        async function renameConversation(convId, oldTitle) {
+            const input = prompt("Rename chat:", oldTitle);
+            if (input === null) return;
+            const title = input.trim();
+            if (!title) return;
+
+            const res = await fetch("/rename_chat", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conversation_id: convId, title })
+            });
+            if (!res.ok) {
+                alert("Could not rename the chat.");
+                return;
+            }
             loadConversations();
         }
 
