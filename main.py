@@ -18,7 +18,7 @@ def main():
             break
         
         try:
-            response = run_agent(user_input)
+            response, _ = run_agent(user_input)
             print(f"\n🤖 Agent:\n{response}\n")
             print("-" * 50)
         except Exception as e:

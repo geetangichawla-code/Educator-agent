@@ -3,7 +3,6 @@ from flask import Flask, render_template, request, redirect, url_for, session, j
 import database
 import documents
 from agent import run_agent
-from router import classify_intent
 from dotenv import load_dotenv
 import os
 
@@ -98,10 +97,9 @@ def chat():
 
     database.save_message(uid, conv_id, "user", user_message)
 
-    intent = classify_intent(user_message)
     doc = database.get_document(uid, conv_id)
     context = doc["content"] if doc else None
-    response = run_agent(user_message, history=history, context=context)
+    response, intent = run_agent(user_message, history=history, context=context)
 
     database.save_message(uid, conv_id, "assistant", response, intent)
     return jsonify({"response": response})
