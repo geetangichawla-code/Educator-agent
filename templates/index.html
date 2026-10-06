@@ -40,6 +40,8 @@
 
             <div class="input-area">
                 <input type="text" id="userInput" placeholder="Type your message here..." />
+                <button id="attachBtn" type="button" title="Attach a document">📎</button>
+                <input type="file" id="fileInput" accept=".pdf,.docx,.txt" hidden>
                 <button id="micBtn" type="button" title="Speak">🎤</button>
                 <button onclick="sendMessage()">Send</button>
             </div>
@@ -351,6 +353,36 @@
         window.addEventListener("DOMContentLoaded", () => {
             loadHistory();
             loadConversations();
+        });
+
+        // --- Document upload ---
+        document.getElementById("attachBtn").addEventListener("click", () => {
+            document.getElementById("fileInput").click();
+        });
+
+        document.getElementById("fileInput").addEventListener("change", async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const chatBox = document.getElementById("chatBox");
+            const form = new FormData();
+            form.append("file", file);
+
+            try {
+                const res = await fetch("/upload", { method: "POST", body: form });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Upload failed.");
+                } else {
+                    let note = `📎 Attached <b>${escapeHtml(data.filename)}</b> to this chat. Ask me to quiz you on it, summarise it, or make a study plan from it.`;
+                    if (data.truncated) note += " (Long file: only the first part is used.)";
+                    chatBox.innerHTML += `<div class="message bot-message"><p>${note}</p></div>`;
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            } catch (err) {
+                alert("Upload failed.");
+            }
+            e.target.value = ""; // allows re-uploading the same file
         });
 
         // --- Voice input (Web Speech API) ---

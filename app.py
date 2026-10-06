@@ -1,6 +1,7 @@
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import database
+import documents
 from agent import run_agent
 from router import classify_intent
 from dotenv import load_dotenv
@@ -9,6 +10,8 @@ import os
 load_dotenv()
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # reject uploads over 5 MB
+MAX_DOC_CHARS = 8000  # keeps requests small; longer documents are cut
 app.secret_key = os.getenv("FLASK_SECRET_KEY")
 if not app.secret_key:
     raise ValueError("FLASK_SECRET_KEY not found in .env file")
@@ -96,7 +99,9 @@ def chat():
     database.save_message(uid, conv_id, "user", user_message)
 
     intent = classify_intent(user_message)
-    response = run_agent(user_message, history=history)
+    doc = database.get_document(uid, conv_id)
+    context = doc["content"] if doc else None
+    response = run_agent(user_message, history=history, context=context)
 
     database.save_message(uid, conv_id, "assistant", response, intent)
     return jsonify({"response": response})
@@ -163,6 +168,30 @@ def rename_chat():
     if not database.rename_conversation(session["user_id"], conv_id, title):
         return jsonify({"error": "Chat not found"}), 404
     return jsonify({"status": "ok"})
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "File too large (max 5 MB)."}), 413
 
+
+@app.route("/upload", methods=["POST"])
+@login_required
+def upload():
+    file = request.files.get("file")
+    if not file or not file.filename:
+        return jsonify({"error": "No file selected."}), 400
+    if documents.extension_of(file.filename) not in documents.ALLOWED_EXTENSIONS:
+        return jsonify({"error": "Only PDF, DOCX and TXT files are supported."}), 400
+
+    try:
+        text = documents.extract_text(file.filename, file.read())
+    except Exception:
+        return jsonify({"error": "Could not read that file."}), 400
+    if not text:
+        return jsonify({"error": "No readable text found (is it a scanned PDF?)."}), 400
+
+    truncated = len(text) > MAX_DOC_CHARS
+    database.save_document(session["user_id"], session["conversation_id"],
+                           file.filename, text[:MAX_DOC_CHARS])
+    return jsonify({"status": "ok", "filename": file.filename, "truncated": truncated})
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
