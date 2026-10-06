@@ -21,3 +21,4 @@ Thumbs.db
 # Never commit key files
 static/*key*.txt
 *.key
+sample.pdf

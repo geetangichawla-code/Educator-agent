@@ -44,7 +44,16 @@ def init_db():
             PRIMARY KEY (user_id, conversation_id)
         )
     """)
-
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS documents (
+            user_id INTEGER NOT NULL,
+            conversation_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content TEXT NOT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, conversation_id)
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -148,6 +157,10 @@ def delete_conversation(user_id: int, conversation_id: str) -> int:
         "DELETE FROM conversation_titles WHERE user_id = ? AND conversation_id = ?",
         (user_id, conversation_id)
     )
+    cursor.execute(
+        "DELETE FROM documents WHERE user_id = ? AND conversation_id = ?",
+        (user_id, conversation_id)
+    )
     conn.commit()
     conn.close()
     return deleted
@@ -167,6 +180,26 @@ def rename_conversation(user_id: int, conversation_id: str, title: str) -> bool:
         "INSERT OR REPLACE INTO conversation_titles (user_id, conversation_id, title) VALUES (?, ?, ?)",
         (user_id, conversation_id, title)
     )
+def save_document(user_id: int, conversation_id: str, filename: str, content: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT OR REPLACE INTO documents (user_id, conversation_id, filename, content) VALUES (?, ?, ?, ?)",
+        (user_id, conversation_id, filename, content)
+    )
+    conn.commit()
+    conn.close()
+
+def get_document(user_id: int, conversation_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT filename, content FROM documents WHERE user_id = ? AND conversation_id = ?",
+        (user_id, conversation_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row
     conn.commit()
     conn.close()
     return True
